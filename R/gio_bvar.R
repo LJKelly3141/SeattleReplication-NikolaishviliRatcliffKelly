@@ -197,12 +197,37 @@ bvar <- function(
                      hyper_min = hyper_min, hyper_max = hyper_max, pars = pars_full,
                      priors = priors, Y = Y, X = X, XX = XX, K = K, M = M, N = N, lags = lags)
     
-    if(runif(1) < exp(ml_temp[["log_ml"]] - ml_draw[["log_ml"]])) { # Accept
-      ml_draw <- ml_temp
-      hyper_draw <- hyper_temp
-      accepted_adj <- accepted_adj + 1
-      if(i > 0) {accepted <- accepted + 1}
-    }
+    # Draw parameters, i.e. beta_draw and sigma_draw
+    # These need X and N with the dummy observations from `ml_draw`
+    draws <- BVAR:::draw_post(XX = ml_draw[["XX"]], N = ml_draw[["N"]],
+                              M = M, lags = lags, b = priors[["b"]], psi = ml_draw[["psi"]],
+                              sse = ml_draw[["sse"]], beta_hat = ml_draw[["beta_hat"]],
+                              omega_inv = ml_draw[["omega_inv"]])
+    
+    # Test sign and magnitude restrictions!
+    ## Get impact matrix
+    impact_mat <- draws[["sigma_draw"]] |> chol() |> t() 
+    
+    ## Transform residuals by `impact_mat` to get
+    ## "structural" shock paths 
+    reduced_resids <- Y - X %*% draws[["beta_draw"]]
+    struct_resids <- solve(impact_mat) %*% t(reduced_resids)
+    struct_resids <- struct_resids |> t()
+    w1 = struct_resids[,1]
+    
+    ## Test for sign & magnitude restrictions 
+    ## + likelihood 
+      if(w1[118-lags] < 0 && 
+         w1[119-lags] > 0 && 
+         w1[154-lags] > 0 && 
+         w1[155-lags] < 0 && 
+         abs(w1[155-lags]) > 0.5 * abs(reduced_resids[155-lags]) && 
+         runif(1) < exp(ml_temp[["log_ml"]] - ml_draw[["log_ml"]])) { # Accept
+        ml_draw <- ml_temp
+        hyper_draw <- hyper_temp
+        accepted_adj <- accepted_adj + 1
+        if(i > 0) {accepted <- accepted + 1}
+      }
     
     # Tune acceptance during burn-in phase
     if(mh[["adjust_acc"]] && i <= -n_adj && (i + n_burn) %% 10 == 0) {
@@ -218,13 +243,6 @@ bvar <- function(
       
       ml_store[(i / n_thin)] <- ml_draw[["log_ml"]]
       hyper_store[(i / n_thin), ] <- hyper_draw
-      
-      # Draw parameters, i.e. beta_draw and sigma_draw
-      # These need X and N with the dummy observations from `ml_draw`
-      draws <- BVAR:::draw_post(XX = ml_draw[["XX"]], N = ml_draw[["N"]],
-                         M = M, lags = lags, b = priors[["b"]], psi = ml_draw[["psi"]],
-                         sse = ml_draw[["sse"]], beta_hat = ml_draw[["beta_hat"]],
-                         omega_inv = ml_draw[["omega_inv"]])
       
       beta_store[(i / n_thin), , ] <- draws[["beta_draw"]]
       sigma_store[(i / n_thin), , ] <- draws[["sigma_draw"]]
